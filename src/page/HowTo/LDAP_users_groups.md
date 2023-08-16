@@ -36,7 +36,7 @@ $ ipa env | grep -E '(basedn|domain|realm):'
   realm: IPA.EXAMPLE
 ```
 
-## Alternatives to LDAP clients
+## Alternatives to LDAP bindings
 
 TODO
 
@@ -48,7 +48,7 @@ TODO
 * OIDC / SCIM with ipa-tuura and KeyCloak
 
 
-## Authentication
+## LDAP client authentication
 
 TODO
 
@@ -88,6 +88,44 @@ hidden from normal operations and cannot log in.
 Please note that applications should not use the `uidNumber` and `gidNumber`
 attributes of a group entry. The values only reflect the defaults. ID views
 can override the values for a given host or host group.
+
+
+## User authentication
+
+If possible, applications should support Kerberos/GSSAPI or other means
+to leverage FreeIPA's SSO capabilities such as KeyCloak. SSO is both more
+convenient for the user and more secure.
+
+If Kerberos is not possible, then 3rd party clients can also authenticate
+users directly against FreeIPA's LDAP server. For security and compliance
+reasons, clients must never have read access to the user's password and
+Kerberos credentials. Clients also should not compare user passwords with
+an LDAP search. Instead application should attempt an LDAP bind with
+user's bind DN and user credentials.
+
+1) Translate the user login name to user bind DN, e.g. `myuser` ->
+   `uid=myuser,cn=users,cn=accounts,dc=ipa,dc=example`.
+2) Open a new connection to FreeIPA's LDAP server.
+3) If the connection is a plain `ldap://` connection on port 389/TCP,
+   establish a secure connection with STARTTLS, see
+   [`ldap_start_tls_s(3)`](https://man7.org/linux/man-pages/man3/ldap_start_tls_s.3.html).
+4) Attempt to bind with user bind DN and user credentials, see
+   [`ldap_bind(3)`](https://man7.org/linux/man-pages/man3/ldap_bind.3.html).
+5) If bind is successful, use the information to retrieve user information
+   from LDAP server.
+6) Close LDAP connection
+
+LDAP bind works for user accounts that have *"password authentication"*
+or *"Two factor authentication (password + OTP)"* enabled. PKINIT and External
+Identity Provider are not supported. LDAP bind obeys `nsAccountLock` but
+ignores password expiration unless the user's password policy has
+[LDAP Grace Period](https://freeipa.readthedocs.io/en/latest/designs/ldap_grace_period.html)
+configured.
+
+For 2FA, the user has to enter their password directly followed by OTP value
+(e.g. "`MyPassword654321`" for password `MyPassword` and OTP `654321`).
+
+**TODO:** Verify whether RADIUS auth works, too.
 
 
 ## User groups
