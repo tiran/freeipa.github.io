@@ -84,6 +84,9 @@ hidden from normal operations and cannot log in.
     * last name: `sn`
     * email addresses: `mail` (optional, multi-valued)
     * account lock status: `nsAccountLock` (user is active if the attribute is missing or `FALSE`)
+* FreeIPA server plugin code:
+  [baseuser](https://github.com/freeipa/freeipa/blob/master/ipaserver/plugins/baseuser.py)
+  [user](https://github.com/freeipa/freeipa/blob/master/ipaserver/plugins/user.py)
 
 Please note that applications should not use the `uidNumber` and `gidNumber`
 attributes of a group entry. The values only reflect the defaults. ID views
@@ -150,6 +153,9 @@ managed internally.
     * group name: `cn` (**RDN attribute**)
     * description: `description` (optional)
     * UUID: `ipaUniqueId`
+* FreeIPA server plugin code:
+  [group](https://github.com/freeipa/freeipa/blob/master/ipaserver/plugins/group.py)
+
 
 Additionally user groups may have an `ipaNTGroupsAttr` object class and an
 `ipaNTSecurityIdentifier` attribute.
@@ -286,7 +292,8 @@ memberOf: cn=mygroup,cn=groups,cn=accounts,dc=ipa,dc=example
 ```
 
 The `MemberOf Plugin` only works in one direction. An update of
-`memberOf` does **NOT** update the reverse entry!
+`memberOf` does **NOT** update the reverse entry! You should never modify
+a `memberOf` attribute.
 
 The second plugin `cn=referential integrity postoperation,cn=plugins,cn=config`
 ensures that the `member` attribute does not contain any dangling members.
@@ -313,23 +320,70 @@ to create missing entryUUID attributes.
 On all IPA servers, check the status of the entryuuid plugin:
 
 ```shell
-$ dsconf IPA-EXAMPLE plugin entryuuid status
+$ sudo dsconf IPA-EXAMPLE plugin entryuuid status
 ```
 
 If the plugin is disabled, enable it with:
 
 ```shell
-$ dsconf IPA-EXAMPLE plugin entryuuid enable
+$ sudo dsconf IPA-EXAMPLE plugin entryuuid enable
 ```
 
 Once the plugin is enabled on all IPA servers, run a fixup task to create
 missing `entryUUID` attributes. The task may take a while to complete.
 
 ```shell
-$ dsconf IPA-EXAMPLE plugin entryuuid fixup dc=ipa,dc=example
+$ sudo dsconf IPA-EXAMPLE plugin entryuuid fixup dc=ipa,dc=example
 ```
 
-**NOTE**
+### entryUUID read/search/compare permission
+
+389-DS and FreeIPA use ACIs (Access Control Instructions) to limit read
+and write access to attributes. Users cannot read an attribute unless an
+ACI grants access to the attribute. FreeIPA does not come with an ACI
+that allows compare, read, or search access to `entryUUID`.
+
+Create a file `85-entryuuid-aci.update` with content:
+```
+dn: $SUFFIX
+add:aci: (targetattr = "entryUUID")(targetfilter = "(|(objectclass=ipausergroup)(objectclass=posixgroup)(objectClass=posixaccount))")(version 3.0;acl "Read entryUUID of users and user groups";allow (compare,read,search) userdn = "ldap:///all";)
+```
+
+then apply the update with
+[`ipa-ldap-updater`](https://linux.die.net/man/1/ipa-ldap-updater) as root
+user on one IPA server. The ACI is automatically replicated to other IPA
+servers:
+
+```shell
+$ sudo ipa-ldap-updater 85-entryuuid-aci.update
+```
+
+The ACI is greated in the root of FreeIPA's domain database and permits
+read access to the `entryUUID` of user and group entries for all authenticated
+principals. You can replace `ldap:///anyone` with `ldap:///all` to grant
+read access for anonymous, unauthenticated connections, too.
+
+
+### entryUUID in Schema Compatibility (`cn=compat`)
+
+Create a file `85-schema-compat-entryuuid.update` with content:
+```
+dn: cn=users, cn=Schema Compatibility, cn=plugins, cn=config
+add:schema-compat-entry-attribute: entryUUID=%{entryUUID}
+
+dn: cn=groups, cn=Schema Compatibility, cn=plugins, cn=config
+add:schema-compat-entry-attribute: entryUUID=%{entryUUID}
+```
+
+then apply the updates with `ipa-ldap-updater` as root user on every IPA
+server. The change is **NOT** replicated to other IPA servers.
+```shell
+$ sudo ipa-ldap-updater 85-schema-compat-entryuuid.update
+```
+
+
+### entryUUID remarks
+
 The entryUUID attribute is a so called *operational attribute*. That means the
 attribute is created and maintained by the LDAP server. Operational attributes
 don't need an object class. They are not returned by a wildcard `'*'` query,
