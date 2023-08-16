@@ -84,6 +84,7 @@ Interoperability with other systems
    network <https://www.dragonsreach.it/2014/10/24/kerberos-over-http-on-a-firewalled-network/>`__
 -  `PolicyKit integration <Howto/FreeIPA_PolicyKit>`__
 -  `HowTo/FreeIPA_on_banana_pi <HowTo/FreeIPA_on_banana_pi>`__
+-  `FreeIPA LDAP users and groups for 3rd party clients <HowTo/LDAP_users_groups.md>`__
 
 Windows
 ----------------------------------------------------------------------------------------------
