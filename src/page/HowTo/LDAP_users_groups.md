@@ -47,6 +47,7 @@ TODO
   and [mod_authnz_pam](https://www.adelton.com/apache/mod_authnz_pam/) for Apache HTTPd
 * OIDC / SCIM with ipa-tuura and KeyCloak
 
+
 ## Authentication
 
 TODO
@@ -54,6 +55,7 @@ TODO
 * service account
 * system account `cn=sysaccounts,cn=etc,$SUFFIX`
 * password, Kerberos/GSSAPI
+
 
 ## Users
 
@@ -63,23 +65,25 @@ hidden from normal operations and cannot log in.
 
 * base DN: `cn=users,cn=accounts,$SUFFIX`
 * user filter: `(&(objectClass=posixAccount)(!(nsAccountLock=TRUE)))`
-* user login: `uid` (RDN attribute)
+* user search filter: `(&(objectClass=posixAccount)(!(nsAccountLock=TRUE))(uid=%s))`
 * user dn example: `uid=myuser,cn=users,cn=accounts,$SUFFIX`
 * object classes:
+  - `posixAccount` (primary)
   - `inetOrgPerson` (optional)
   - `inetUser`
   - `ipaObject`
   - `organizationalPerson` (optional)
   - `person`
-  - `posixAccount` (primary)
   - ...
-* UUID attribute: `ipaUniqueId`
-* full name: `cn`
-* display name: `displayName` (optional)
-* first name: `givenName` (optional)
-* last name: `sn`
-* email address: `mail` (optional, multi-valued)
-* account lock: `nsAccountLock` (user is active if the attribute is missing or `FALSE`)
+* attributes:
+    * user login: `uid` (**RDN attribute**)
+    * UUID: `ipaUniqueId`
+    * full name: `cn`
+    * display name: `displayName` (optional, usually the same as `cn`)
+    * first name: `givenName` (optional)
+    * last name: `sn`
+    * email addresses: `mail` (optional, multi-valued)
+    * account lock status: `nsAccountLock` (user is active if the attribute is missing or `FALSE`)
 
 Please note that applications should not use the `uidNumber` and `gidNumber`
 attributes of a group entry. The values only reflect the defaults. ID views
@@ -96,16 +100,18 @@ Private user groups (PUG) behave differently than other user groups and are
 managed internally.
 
 * base DN: `cn=groups,cn=accounts,$SUFFIX`
-* generic group filter: `(objectClass=ipaUserGroup)` (not PUG)
-* group name: `cn` (RDN attribute)
+* generic group filter: `(objectClass=ipaUserGroup)`
+* group search filter: `(&(objectClass=ipaUserGroup)(cn=%s))`
 * group dn example: `cn=mygroup,cn=groups,cn=accounts,$SUFFIX`
-* object classes:
-  - `groupOfNames` (not PUG)
+* object classes: (not PUG)
+  - `ipaUserGroup` (primary)
+  - `groupOfNames`
   - `ipaObject`
-  - `ipaUserGroup` (primary, not PUG)
-  - `nestedGroup` (not PUG)
-* description attribute: `description` (optional)
-* UUID attribute: `ipaUniqueId`
+  - `nestedGroup`
+* attributes:
+    * group name: `cn` (**RDN attribute**)
+    * description: `description` (optional)
+    * UUID: `ipaUniqueId`
 
 Additionally user groups may have an `ipaNTGroupsAttr` object class and an
 `ipaNTSecurityIdentifier` attribute.
@@ -145,6 +151,7 @@ managed user accounts, e.g. from Active Directory.
 Typically ever user account has a private user group (PUG) with the same name
 as the user. PUGs are managed internally. 3rd party applications should not
 use PUGs.
+
 
 ## Group member / memberOf in FreeIPA
 
@@ -293,7 +300,23 @@ either explicitly by name (e.g. `* entryUUID`) or with the `+` wildcard
 (e.g. `* +`).
 
 
+## Security considerations
+
+LDAP filters and queries are vulnerable to SQL inject-like attacks. Any value
+from an untrusted source must be escaped properly.
+[RFC 4515](https://www.rfc-editor.org/rfc/rfc451) defines quoting rules for LDAP
+filters.
+
+* `NUL` byte '`\x00`' -> '`\00`'
+* open parenthesis (LPAREN) '`(`' -> '`\28`'
+* closing parenthesis (RPAREN) '`)`' -> '`\29`'
+* asterisk '`*`' -> '`\2a`'
+* backslash '`\`' -> '`\5c`'
+
+
 ## Terminology
+
+TODO
 
 - DIT: directory information tree, the tree-like hierarchy of an LDAP
   directory, see [DIT and the LDAP Root DSE](https://ldap.com/dit-and-the-ldap-root-dse/)
