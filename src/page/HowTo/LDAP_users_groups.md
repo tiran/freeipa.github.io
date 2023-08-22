@@ -2,10 +2,27 @@
 
 This guide explains FreeIPA's LDAP DIT (directory information tree) for
 users and user groups, and how 3rd party clients can use LDAP to fetch
-user and group information.
+user and group information. The document covers client authentication,
+user authentication, user and group objects, group membership, entryUUID,
+compat tree, security, and some tips & tricks.
+
 
 - Author: Christian Heimes <cheimes@redhat.com>
-- Created: 2023-08-16
+- Created: 2023-08-22
+
+
+## Alternatives to LDAP bindings
+
+TODO
+
+* sssd-ifp (info pipe) D-Bus service
+* [mod_lookup_identity](https://www.adelton.com/apache/mod_lookup_identity/)
+  for Apache HTTPd, which uses `sssd-ifp`` internally
+* PAM service, e.g. with Apache modules
+  [mod_intercept_form_submit](https://www.adelton.com/apache/mod_intercept_form_submit/)
+  and [mod_authnz_pam](https://www.adelton.com/apache/mod_authnz_pam/)
+* OIDC / SCIM with ipa-tuura and KeyCloak
+
 
 ## Conventions
 
@@ -36,18 +53,6 @@ $ ipa env | grep -E '(basedn|domain|realm):'
   realm: IPA.EXAMPLE
 ```
 
-## Alternatives to LDAP bindings
-
-TODO
-
-* sssd-ifp (info pipe) D-Bus bindings
-* [mod_lookup_identity](https://www.adelton.com/apache/mod_lookup_identity/) for Apache HTTPd
-* PAM service
-* [mod_intercept_form_submit](https://www.adelton.com/apache/mod_intercept_form_submit/)
-  and [mod_authnz_pam](https://www.adelton.com/apache/mod_authnz_pam/) for Apache HTTPd
-* OIDC / SCIM with ipa-tuura and KeyCloak
-
-
 ## LDAP client authentication
 
 TODO
@@ -55,6 +60,34 @@ TODO
 * service account
 * system account `cn=sysaccounts,cn=etc,$SUFFIX`
 * password, Kerberos/GSSAPI
+
+### Password authentication with system account
+
+Create a file `myservice-sysaccount.update`, replace **two**
+occurances of `myservice` with your service name, and choose a random
+password. The LDAP server stores the password with a secure password hashing
+algorithm:
+
+```
+dn: uid=myservice,cn=sysaccounts,cn=etc,$SUFFIX
+default:objectclass: account
+default:objectclass: simpleSecurityObject
+default:objectclass: nsMemberOf
+default:uid: myservice
+default:passwordExpirationTime: 20380119031407Z
+default:nsIdleTimeout: 0
+only:userPassword: MySecretPassword
+```
+
+then apply the update with `ipa-ldap-updater` as root user on one IPA server.
+The system account is automatically replicated to other IPA servers:
+
+```shell
+$ sudo ipa-ldap-updater myservice-sysaccount.update.update
+```
+
+The `only:userPassword` line allows you to reuse the file to change the
+password to a different value.
 
 
 ## Users
@@ -300,6 +333,16 @@ ensures that the `member` attribute does not contain any dangling members.
 It updates members on rename (`MODRDN`) or removes members on delete.
 
 
+## Schema Compatibility (`cn=compat`)
+
+TODO
+
+- [`ipa-compat-manage`](https://linux.die.net/man/1/ipa-compat-manage)
+- [`ipactl`](https://linux.die.net/man/8/ipactl)
+
+- users: `cn=users,cn=compat,dc=ipa,dc=example`
+- groups: `cn=groups,cn=compat,dc=ipa,dc=example`
+
 ## Unique identifier (ipaUniqueId, entryUUID)
 
 Some 3rd party application require a unique identifier that does not chance
@@ -349,10 +392,8 @@ dn: $SUFFIX
 add:aci: (targetattr = "entryUUID")(targetfilter = "(|(objectclass=ipausergroup)(objectclass=posixgroup)(objectClass=posixaccount))")(version 3.0;acl "Read entryUUID of users and user groups";allow (compare,read,search) userdn = "ldap:///all";)
 ```
 
-then apply the update with
-[`ipa-ldap-updater`](https://linux.die.net/man/1/ipa-ldap-updater) as root
-user on one IPA server. The ACI is automatically replicated to other IPA
-servers:
+then apply the update with `ipa-ldap-updater` as root user on one IPA server.
+The ACI is automatically replicated to other IPA servers:
 
 ```shell
 $ sudo ipa-ldap-updater 85-entryuuid-aci.update
@@ -381,6 +422,22 @@ server. The change is **NOT** replicated to other IPA servers.
 $ sudo ipa-ldap-updater 85-schema-compat-entryuuid.update
 ```
 
+### entryUUID queries and index
+
+The `entryUUID` attribute is not indexed. If your application performs LDAP
+searches with `entryUUID` filter, you may need to create an index on the
+field. Otherwise queries fall back to full table scans, which are slow and
+can impact overall performance.
+
+```
+# 85-entryuuid-index.update
+dn: cn=entryUUID,cn=index,cn=userRoot,cn=ldbm database,cn=plugins,cn=config
+default:cn: entryUUID
+default:ObjectClass: top
+default:ObjectClass: nsIndex
+default:nsSystemIndex: false
+add:nsIndexType: eq
+```
 
 ### entryUUID remarks
 
@@ -391,8 +448,40 @@ because `*` only matches user attributes. Operational attributes must be fetched
 either explicitly by name (e.g. `* entryUUID`) or with the `+` wildcard
 (e.g. `* +`).
 
+## Tips & tricks
+
+### ipa-ldap-updater
+
+[`ipa-ldap-updater`](https://linux.die.net/man/1/ipa-ldap-updater) is a
+command line tool to apply updates to IPA's LDAP server. The tool is someward
+similar to `ldapmodify`. It has a different syntax for modifications and
+comes with additional features.
+
+- More options to create or modify entries
+- Automatic authentication with LDAPI (LDAP over Unix socket) as root user
+- Template variables like `$SUFFIX` (basedn), `$DOMAIN`, `$REALM`, and `$FQDN`
+- Recognizes DB index changes and creates index tasks in the background
+- Can update LDAP schema
+- Can execute IPA server update plugins
+
+Any changes to domain database (base DN `dc=ipa,dc=example`), CA database,
+and LDAP schema are replicated to other LDAP servers in the topology.
+Replication is not instantanious and may take a while in a large and busy
+IPA cluster. Modification of `cn=config` tree is local and **not**
+replicated. These changes have to be applied to every LDAP server.
+
+### Limit access to members of a group
+
+```shell
+$ ipa group-add --nonposix myservice-users
+```
+
+`(&(objectClass=posixAccount)(!(nsAccountLock=TRUE))(memberOf=cn=myservice-users,cn=groups,cn=accounts,dc=ipa,dc=example)(uid=%s))`
+
 
 ## Security considerations
+
+### LDAP filters
 
 LDAP filters and queries are vulnerable to SQL inject-like attacks. Any value
 from an untrusted source must be escaped properly.
@@ -405,6 +494,14 @@ filters.
 * asterisk '`*`' -> '`\2a`'
 * backslash '`\`' -> '`\5c`'
 
+### LDAP distinguished names (DNs)
+
+Application must also escape special characters if they create a DN from an
+untrusted source, e.g. when they convert a username into a user bind DN.
+[RFC 4514](https://datatracker.ietf.org/doc/html/rfc4514), section 2.4
+defines escaping rules for '`"`', '`+`', '`,`', '`;`', '`<`', '`>`',
+and '`\`', as well '`#`' and `' '` (space) at the beginning and end of an
+attribute value.
 
 ## Terminology
 
